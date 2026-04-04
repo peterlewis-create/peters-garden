@@ -14,8 +14,6 @@ SB_KEY = "sb_publishable_uk0-o2scZSQNdTm_lgIrgw_xtg4uM6_Y9oY64"
 
 # 1. PAGE SETUP
 st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
-
-# Initialize Supabase
 supabase: Client = create_client(SB_URL, SB_KEY)
 
 # 2. HIGH CONTRAST STYLING
@@ -23,7 +21,7 @@ st.markdown("""
     <style>
     .stApp, [data-testid="stSidebar"], .stMarkdown { background-color: #000000 !important; }
     p, li, h1, h2, h3, span, label, div, .stMarkdown { color: #FFFFFF !important; }
-    button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; border-radius: 8px !important; padding: 8px 15px !important; }
+    button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; border-radius: 8px !important; }
     .gallery-card { background-color: #000000; padding: 15px; border-radius: 15px; border: 2px solid #333333; text-align: center; margin-bottom: 30px; }
     .box { padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 4px solid; background-color: #000000; }
     .box-flourish { border-color: #22C55E; }
@@ -38,14 +36,17 @@ st.markdown("""
 # 3. DATABASE FUNCTIONS
 def fetch_garden():
     try:
-        res = supabase.table("garden_table").select("*").order("created_at").execute()
+        res = supabase.table("garden_table").select("*").order("created_at", ascending=False).execute()
         return res.data
     except: return []
 
 def add_to_cloud(name, loc, img, data):
-    supabase.table("garden_table").insert({
-        "name": name, "location": loc, "image": img, "data": data
-    }).execute()
+    try:
+        supabase.table("garden_table").insert({
+            "name": name, "location": loc, "image": img, "data": data
+        }).execute()
+    except Exception as e:
+        st.error(f"Sync Error: {e}")
 
 # 4. AI ENGINE
 def analyze_plant_gemini(image_pil, api_key):
@@ -65,33 +66,26 @@ if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 with st.sidebar:
     st.title("🌿 Settings")
     gemini_key = st.text_input("Paste Gemini API Key", type="password")
-    if gemini_key: st.success("✅ AI Active")
-
-    st.divider()
+    
     if st.button("⬅️ BACK TO GALLERY"):
         st.session_state.view_mode = "gallery"
         st.rerun()
 
-    # --- RESTORED DATA SYNC TOOLS ---
     st.divider()
     st.subheader("💾 Cloud Sync & Tools")
     
-    # IMPORT OLD DATA: This allows you to upload the file from your desktop
-    uploaded_old_data = st.file_uploader("📤 Upload Old Garden Data (.json)", type="json")
+    uploaded_old_data = st.file_uploader("📤 Upload Desktop JSON", type="json")
     if uploaded_old_data:
         old_plants = json.load(uploaded_old_data)
+        count = 0
         with st.spinner("Moving plants to Cloud..."):
             for p in old_plants:
-                # Compatibility check for images
-                img = p.get('image') or (p['history'][-1]['image'] if 'history' in p else None)
-                add_to_cloud(p['name'], p.get('location', 'Lounge'), img, p.get('data', ''))
-            st.success("All plants moved to Cloud!")
+                if p.get('name'):
+                    img = p.get('image') or (p['history'][-1]['image'] if 'history' in p else None)
+                    add_to_cloud(p['name'], p.get('location', 'Garden'), img, p.get('data', ''))
+                    count += 1
+            st.success(f"Restored {count} plants to the Cloud!")
             st.rerun()
-
-    # EXPORT: Let's you save a hard copy of your cloud data
-    current_garden = fetch_garden()
-    json_dump = json.dumps(current_garden)
-    st.download_button("📥 Download Cloud Backup", json_dump, file_name="peters_garden_cloud_backup.json")
 
     st.divider()
     st.header("📸 Add Plant")
@@ -100,14 +94,14 @@ with st.sidebar:
     
     if st.button("IDENTIFY & SAVE"):
         if uploaded_file and gemini_key:
-            with st.spinner("Syncing..."):
+            with st.spinner("Identifying..."):
                 image = Image.open(uploaded_file).convert('RGB')
                 raw_data = analyze_plant_gemini(image, gemini_key)
                 buf = io.BytesIO()
-                image.save(buf, format="JPEG", quality=50)
+                image.save(buf, format="JPEG", quality=40) # Compress for cloud speed
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
                 try: name = raw_data.split("[NAME]")[1].split("[")[0].strip()
-                except: name = "New Plant"
+                except: name = "Unknown Plant"
                 add_to_cloud(name, loc_input, img_b64, raw_data)
                 st.rerun()
 
@@ -115,15 +109,15 @@ with st.sidebar:
 garden_data = fetch_garden()
 
 if st.session_state.view_mode == "gallery":
-    st.title("My Garden (Cloud)")
+    st.title("My Garden")
     search = st.text_input("🔍 Search garden...")
     display_list = [p for p in garden_data if search.lower() in p['name'].lower()]
     
     if not display_list:
-        st.info("Your cloud database is empty. Upload your old file from your Desktop using the sidebar to restore your data.")
+        st.info("Gallery is empty. Use the sidebar to upload your JSON file or add a new plant.")
     
     cols = st.columns(2)
-    for i, plant in enumerate(reversed(display_list)):
+    for i, plant in enumerate(display_list):
         with cols[i % 2]:
             st.markdown('<div class="gallery-card">', unsafe_allow_html=True)
             if plant['image']: st.image(base64.b64decode(plant['image']), use_container_width=True)
@@ -144,15 +138,15 @@ else:
         st.image(base64.b64decode(p['image']), use_container_width=True)
         search_url = f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote(p['name'] + ' plant mature')}"
         st.link_button("🌐 VIEW PRIME PHOTOS", search_url)
-    with c2:
-        def gs(sec): 
-            try: return p['data'].split(f"[{sec}]")[1].split("[")[0].strip()
-            except: return "Data missing..."
-        st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{gs("FLOURISH")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{gs("FORBIDDEN")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{gs("PRUNE_FEED")}</div>', unsafe_allow_html=True)
-        with st.expander("📍 VIEW PRUNING MAP"): st.warning(gs('MAP'))
         if st.button("🗑️ DELETE"):
             supabase.table("garden_table").delete().eq("id", p['id']).execute()
             st.session_state.view_mode = "gallery"
             st.rerun()
+    with c2:
+        def gs(sec): 
+            try: return p['data'].split(f"[{sec}]")[1].split("[")[0].strip()
+            except: return "Data missing."
+        st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{gs("FLOURISH")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{gs("FORBIDDEN")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{gs("PRUNE_FEED")}</div>', unsafe_allow_html=True)
+        with st.expander("📍 VIEW PRUNING MAP"): st.warning(gs('MAP'))
