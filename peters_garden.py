@@ -23,7 +23,7 @@ except Exception as e:
     st.stop()
 
 # 3. HIGH CONTRAST STYLING
-st.markdown("<style>.stApp { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; } .gallery-card { background-color: #111111; padding: 15px; border-radius: 15px; border: 1px solid #444; text-align: center; margin-bottom: 30px; }</style>", unsafe_allow_html=True)
+st.markdown("<style>.stApp { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; } .gallery-card { background-color: #111111; padding: 15px; border-radius: 15px; border: 1px solid #444; text-align: center; margin-bottom: 30px; min-height: 350px; } .box { padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 4px solid; background-color: #000000; } .box-flourish { border-color: #22C55E; } .box-forbidden { border-color: #EF4444; } .box-prune { border-color: #3B82F6; } .header-label { font-weight: 900; font-size: 1.3rem; text-transform: uppercase; margin-bottom: 10px; display: block; } input { background-color: #222222 !important; color: white !important; }</style>", unsafe_allow_html=True)
 
 # 4. DATABASE FUNCTIONS
 def fetch_garden():
@@ -37,12 +37,11 @@ def add_to_cloud(name, loc, img_b64, data):
         supabase.table("garden_table").insert({
             "name": name, "location": loc, "image": img_b64, "data": data
         }).execute()
-        return True
+        return True, "Success"
     except Exception as e:
-        st.sidebar.error(f"Fail: {e}")
-        return False
+        return False, str(e)
 
-# 5. AI ENGINE
+# 5. AI ENGINE (Defensive Parsing)
 def analyze_plant_gemini(image_pil, api_key):
     try:
         genai.configure(api_key=api_key)
@@ -52,15 +51,28 @@ def analyze_plant_gemini(image_pil, api_key):
         return response.text
     except Exception as e: return f"ERROR: {str(e)}"
 
+def safe_get_sec(text, sec, default="Information pending..."):
+    try:
+        if f"[{sec}]" in text:
+            return text.split(f"[{sec}]")[1].split("[")[0].strip().replace("**", "")
+        return default
+    except: return default
+
 # 6. APP LOGIC
 if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("🌿 Peter's Garden")
     
-    # CLOUD COUNTER
+    # CONNECTION DIAGNOSTIC
+    if st.button("🧪 TEST CLOUD CONNECTION"):
+        success, msg = add_to_cloud("Connection Test", "System", None, "Test Data")
+        if success: st.success("✅ Cloud is LIVE and accepting data!")
+        else: st.error(f"❌ Cloud Connection Failed: {msg}")
+
     garden_data = fetch_garden()
-    st.metric("Plants in Cloud", len(garden_data))
+    st.metric("Total Plants in Cloud", len(garden_data))
     
     if st.button("🔄 REFRESH GALLERY"): st.rerun()
     if st.button("⬅️ BACK TO GALLERY"): 
@@ -74,25 +86,24 @@ with st.sidebar:
         data = json.load(uploaded_json)
         if st.button("Start Moving Plants"):
             prog = st.progress(0)
+            status = st.empty()
             for i, p in enumerate(data):
-                if p.get('name'):
-                    # GET IMAGE
-                    img = p.get('image') or (p['history'][-1].get('image') if 'history' in p else None)
-                    # COMPRESS IMAGE FOR CLOUD STABILITY
-                    if img:
-                        try:
-                            decoded = base64.b64decode(img)
-                            temp_img = Image.open(io.BytesIO(decoded))
-                            buf = io.BytesIO()
-                            temp_img.save(buf, format="JPEG", quality=30)
-                            img = base64.b64encode(buf.getvalue()).decode('utf-8')
-                        except: pass
-                    
-                    name = p.get('name', 'Plant').replace("**", "")
-                    add_to_cloud(name, p.get('location', 'Lounge'), img, p.get('data', ''))
+                img = p.get('image') or (p['history'][-1].get('image') if 'history' in p else None)
+                # Compress images to ensure they save
+                if img:
+                    try:
+                        decoded = base64.b64decode(img)
+                        temp_img = Image.open(io.BytesIO(decoded))
+                        buf = io.BytesIO()
+                        temp_img.save(buf, format="JPEG", quality=25)
+                        img = base64.b64encode(buf.getvalue()).decode('utf-8')
+                    except: pass
+                
+                name = p.get('name', 'Migrated Plant').replace("**", "")
+                status.text(f"Moving: {name}")
+                add_to_cloud(name, p.get('location', 'Lounge'), img, p.get('data', ''))
                 prog.progress((i + 1) / len(data))
-            st.success("Migration Complete! Refreshing...")
-            time.sleep(1)
+            st.success("Migration attempt finished! Click Refresh.")
             st.rerun()
 
     st.divider()
@@ -103,22 +114,25 @@ with st.sidebar:
         if uploaded_file:
             with st.spinner("Analyzing..."):
                 image = Image.open(uploaded_file).convert('RGB')
-                raw_data = analyze_plant_gemini(image, GEMINI_KEY)
+                raw_ai = analyze_plant_gemini(image, GEMINI_KEY)
+                
                 buf = io.BytesIO()
-                image.save(buf, format="JPEG", quality=40)
+                image.save(buf, format="JPEG", quality=30)
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                name = raw_data.split("[NAME]")[1].split("[")[0].strip().replace("**", "")
-                add_to_cloud(name, loc_input, img_b64, raw_data)
+                
+                # SAFE PARSING
+                p_name = safe_get_sec(raw_ai, "NAME", "New Plant")
+                add_to_cloud(p_name, loc_input, img_b64, raw_ai)
                 st.rerun()
 
-# 7. DISPLAY
+# --- MAIN GALLERY ---
 if st.session_state.view_mode == "gallery":
     st.title("My Garden")
     search = st.text_input("🔍 Search...")
-    display_list = [p for p in garden_data if search.lower() in p['name'].lower()]
+    display_list = [p for p in garden_data if search.lower() in p.get('name','').lower() and p.get('name') != "Connection Test"]
     
     if not display_list:
-        st.info(f"Cloud is empty. (Count: {len(garden_data)})")
+        st.info("The gallery is currently empty.")
     
     cols = st.columns(2)
     for i, plant in enumerate(display_list):
@@ -134,23 +148,22 @@ if st.session_state.view_mode == "gallery":
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 else:
+    # DETAIL VIEW
     p = st.session_state.selected_plant
-    st.title(p['name'])
-    st.markdown(f'<div style="background-color:#1E3A8A; padding:10px; border-radius:8px; display:inline-block;">📍 {p["location"]}</div>', unsafe_allow_html=True)
+    st.title(p.get('name', 'Plant'))
+    st.markdown(f'<div style="background-color:#1E3A8A; padding:10px; border-radius:8px; display:inline-block;">📍 {p.get("location", "Lounge")}</div>', unsafe_allow_html=True)
     c1, c2 = st.columns([1, 1.2])
     with c1:
-        st.image(base64.b64decode(p['image']), use_container_width=True)
-        search_url = f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote(p['name'] + ' plant mature')}"
+        if p.get('image'): st.image(base64.b64decode(p['image']), use_container_width=True)
+        search_url = f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote(p.get('name','') + ' plant mature')}"
         st.link_button("🌐 VIEW PRIME PHOTOS", search_url)
         if st.button("🗑️ DELETE"):
             supabase.table("garden_table").delete().eq("id", p['id']).execute()
             st.session_state.view_mode = "gallery"
             st.rerun()
     with c2:
-        def gs(sec): 
-            try: return p['data'].split(f"[{sec}]")[1].split("[")[0].strip()
-            except: return "Pending..."
-        st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{gs("FLOURISH")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{gs("FORBIDDEN")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{gs("PRUNE_FEED")}</div>', unsafe_allow_html=True)
-        with st.expander("📍 VIEW PRUNING MAP"): st.warning(gs('MAP'))
+        d = p.get('data', '')
+        st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{safe_get_sec(d, "FLOURISH")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{safe_get_sec(d, "FORBIDDEN")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{safe_get_sec(d, "PRUNE_FEED")}</div>', unsafe_allow_html=True)
+        with st.expander("📍 VIEW PRUNING MAP"): st.warning(safe_get_sec(d, 'MAP'))
