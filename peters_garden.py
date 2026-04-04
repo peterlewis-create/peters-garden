@@ -11,9 +11,8 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
 
-# 1. LOAD & CLEAN KEYS
+# 1. LOAD KEYS
 try:
-    # We strip spaces to ensure no hidden characters break the connection
     SB_URL = st.secrets["SB_URL"].strip()
     SB_KEY = st.secrets["SB_KEY"].strip()
     GEMINI_KEY = st.secrets["GEMINI_KEY"].strip()
@@ -23,9 +22,10 @@ except Exception as e:
     st.stop()
 
 # 2. STYLING
-st.markdown("<style>.stApp { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; } .gallery-card { background-color: #000000; padding: 15px; border: 2px solid #333333; text-align: center; margin-bottom: 30px; }</style>", unsafe_allow_html=True)
+st.markdown("<style>.stApp, [data-testid='stSidebar'] { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; border-radius: 8px !important; } .gallery-card { background-color: #111111; padding: 15px; border-radius: 15px; border: 2px solid #333333; text-align: center; margin-bottom: 30px; } .box { padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 4px solid; background-color: #000000; } .box-flourish { border-color: #22C55E; } .box-forbidden { border-color: #EF4444; } .box-prune { border-color: #3B82F6; } .header-label { font-weight: 900; font-size: 1.3rem; text-transform: uppercase; margin-bottom: 10px; display: block; } [data-testid='stSidebarCollapsedControl'] { background-color: #22C55E !important; } input { background-color: #222222 !important; color: white !important; }</style>", unsafe_allow_html=True)
 
 # 3. DATABASE FUNCTIONS
+@st.cache_data(ttl=10) # Refresh every 10 seconds
 def fetch_garden():
     try:
         res = supabase.table("garden_table").select("*").order("created_at", ascending=False).execute()
@@ -33,14 +33,10 @@ def fetch_garden():
     except: return []
 
 def add_to_cloud(name, loc, img, data):
-    # This is the actual push to Supabase
     try:
-        supabase.table("garden_table").insert({
-            "name": name, "location": loc, "image": img, "data": data
-        }).execute()
-        return True, "Success"
-    except Exception as e:
-        return False, str(e)
+        supabase.table("garden_table").insert({"name": name, "location": loc, "image": img, "data": data}).execute()
+        return True
+    except: return False
 
 # 4. AI ENGINE
 def analyze_plant_gemini(image_pil, api_key):
@@ -58,12 +54,9 @@ if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 with st.sidebar:
     st.title("🌿 Peter's Garden")
     
-    # Connection Check
-    try:
-        supabase.table("garden_table").select("count", count="exact").execute()
-        st.success("✅ Cloud Connection: Active")
-    except:
-        st.error("❌ Cloud Connection: Invalid Key")
+    if st.button("🔄 REFRESH GALLERY"):
+        st.cache_data.clear()
+        st.rerun()
 
     if st.button("⬅️ BACK TO GALLERY"):
         st.session_state.view_mode = "gallery"
@@ -76,15 +69,14 @@ with st.sidebar:
         data = json.load(uploaded_json)
         if st.button("Start Moving Plants"):
             prog = st.progress(0)
-            status_text = st.empty()
             for i, p in enumerate(data):
                 img = p.get('image') or (p['history'][-1].get('image') if 'history' in p else None)
-                name = p.get('name', 'Plant')
-                status_text.text(f"Moving: {name}...")
-                success, err = add_to_cloud(name, p.get('location', 'Lounge'), img, p.get('data', ''))
-                if not success: st.error(f"Failed {name}: {err}")
+                # Clean name of any markdown characters
+                name = p.get('name', 'Plant').replace("**", "").strip()
+                add_to_cloud(name, p.get('location', 'Lounge'), img, p.get('data', ''))
                 prog.progress((i + 1) / len(data))
             st.success("Migration Complete!")
+            st.cache_data.clear()
             st.rerun()
 
     st.divider()
@@ -99,16 +91,21 @@ with st.sidebar:
                 buf = io.BytesIO()
                 image.save(buf, format="JPEG", quality=40)
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                name = raw_data.split("[NAME]")[1].split("[")[0].strip() if "[NAME]" in raw_data else "New Plant"
+                name = raw_data.split("[NAME]")[1].split("[")[0].strip().replace("**", "")
                 add_to_cloud(name, loc_input, img_b64, raw_data)
+                st.cache_data.clear()
                 st.rerun()
 
-# 6. DISPLAY
+# 6. DISPLAY GALLERY
 garden_data = fetch_garden()
 if st.session_state.view_mode == "gallery":
     st.title("My Garden")
     search = st.text_input("🔍 Search garden...")
     display_list = [p for p in garden_data if search.lower() in p['name'].lower()]
+    
+    if not display_list:
+        st.info("The Cloud Gallery is currently empty. Add a plant or refresh.")
+    
     cols = st.columns(2)
     for i, plant in enumerate(display_list):
         with cols[i % 2]:
@@ -133,12 +130,13 @@ else:
         st.link_button("🌐 VIEW PRIME PHOTOS", search_url)
         if st.button("🗑️ DELETE"):
             supabase.table("garden_table").delete().eq("id", p['id']).execute()
+            st.cache_data.clear()
             st.session_state.view_mode = "gallery"
             st.rerun()
     with c2:
         def gs(sec): 
             try: return p['data'].split(f"[{sec}]")[1].split("[")[0].strip()
-            except: return "Pending..."
+            except: return "Data missing."
         st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{gs("FLOURISH")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{gs("FORBIDDEN")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{gs("PRUNE_FEED")}</div>', unsafe_allow_html=True)
