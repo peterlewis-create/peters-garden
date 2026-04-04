@@ -8,10 +8,18 @@ import io
 import urllib.parse
 from supabase import create_client, Client
 
+# --- PETER'S PERMANENT DATABASE DETAILS ---
+# These are now built-in so you don't have to paste them!
+SB_URL = "https://fgonjbqlwcbmamtpfykn.supabase.co"
+SB_KEY = "sb_publishable_uk0-o2scZSQNdTm_lgIrgw_xtg4uM6_Y9oY64"
+
 # 1. PAGE SETUP
 st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
 
-# 2. HIGH CONTRAST STYLING (White on Black)
+# Initialize Supabase
+supabase: Client = create_client(SB_URL, SB_KEY)
+
+# 2. HIGH CONTRAST STYLING
 st.markdown("""
     <style>
     .stApp, [data-testid="stSidebar"], .stMarkdown { background-color: #000000 !important; }
@@ -28,28 +36,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3. SIDEBAR: CLOUD SYNC SETTINGS
-with st.sidebar:
-    st.title("🔌 Cloud Sync")
-    st.write("Enter your Supabase details to sync across iPhone/iPad/Laptop.")
-    
-    # --- THESE ARE THE BOXES YOU ARE LOOKING FOR ---
-    sb_url = st.text_input("Supabase URL", placeholder="https://xyz.supabase.co")
-    sb_key = st.text_input("Supabase Key", type="password", placeholder="sb_publishable_...")
-    gemini_key = st.text_input("Gemini API Key", type="password")
-    
-    if st.button("🔄 CONNECT & SYNC"):
-        st.success("Synced to Cloud Database!")
-
-# Stop the app if sync info is missing
-if not sb_url or not sb_key:
-    st.warning("⚠️ Action Required: Please enter your Supabase URL and Key in the sidebar to access your garden.")
-    st.stop()
-
-# Initialize Supabase
-supabase: Client = create_client(sb_url, sb_key)
-
-# 4. DATABASE FUNCTIONS
+# 3. DATABASE FUNCTIONS
 def fetch_garden():
     try:
         res = supabase.table("garden_table").select("*").order("created_at").execute()
@@ -61,7 +48,7 @@ def add_to_cloud(name, loc, img, data):
         "name": name, "location": loc, "image": img, "data": data
     }).execute()
 
-# 5. AI ENGINE
+# 4. AI ENGINE
 def analyze_plant_gemini(image_pil, api_key):
     try:
         genai.configure(api_key=api_key.strip())
@@ -73,37 +60,53 @@ def analyze_plant_gemini(image_pil, api_key):
         return response.text
     except Exception as e: return f"ERROR: {str(e)}"
 
-# 6. APP LOGIC
+# 5. SIDEBAR
 if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 
-# SIDEBAR: ADD PLANT
 with st.sidebar:
+    st.title("🌿 Settings")
+    
+    # Peter's Gemini Key (Paste your long Google key here once)
+    gemini_key = st.text_input("Paste Gemini API Key", type="password")
+    if gemini_key:
+        st.success("✅ AI Active")
+
     st.divider()
     if st.button("⬅️ BACK TO GALLERY"):
         st.session_state.view_mode = "gallery"
         st.rerun()
+
+    st.divider()
     st.header("📸 Add Plant")
-    uploaded_file = st.file_uploader("Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
-    loc_input = st.text_input("Location")
+    uploaded_file = st.file_uploader("Take Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
+    loc_input = st.text_input("Location (e.g. Lounge)")
+    
     if st.button("IDENTIFY & SAVE"):
         if uploaded_file and gemini_key:
-            with st.spinner("Analyzing & Syncing..."):
+            with st.spinner("Syncing to Cloud..."):
                 image = Image.open(uploaded_file).convert('RGB')
                 raw_data = analyze_plant_gemini(image, gemini_key)
                 buf = io.BytesIO()
                 image.save(buf, format="JPEG", quality=50)
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                plant_name = raw_data.split("[NAME]")[1].split("[")[0].strip()
-                add_to_cloud(plant_name, loc_input, img_b64, raw_data)
+                try:
+                    name = raw_data.split("[NAME]")[1].split("[")[0].strip()
+                except:
+                    name = "New Plant"
+                add_to_cloud(name, loc_input, img_b64, raw_data)
+                st.success("Added to Cloud!")
                 st.rerun()
 
-# 7. MAIN DISPLAY
+# 6. MAIN DISPLAY
 garden_data = fetch_garden()
 
 if st.session_state.view_mode == "gallery":
     st.title("My Garden")
-    search = st.text_input("🔍 Search garden...")
+    search = st.text_input("🔍 Search your garden...")
     display_list = [p for p in garden_data if search.lower() in p['name'].lower()]
+    
+    if not display_list:
+        st.info("The garden is currently empty. Open the sidebar to add your first plant!")
     
     cols = st.columns(2)
     for i, plant in enumerate(reversed(display_list)):
@@ -118,6 +121,7 @@ if st.session_state.view_mode == "gallery":
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 else:
+    # DETAILS VIEW
     p = st.session_state.selected_plant
     st.title(p['name'])
     st.markdown(f'<div style="background-color:#1E3A8A; padding:10px; border-radius:8px; display:inline-block;">📍 {p["location"]}</div>', unsafe_allow_html=True)
