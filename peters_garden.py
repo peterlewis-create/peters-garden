@@ -8,15 +8,14 @@ from PIL import Image
 import io
 import urllib.parse
 
-# 1. HEIC support for Mac/iPhone
+# 1. HEIC support
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
 except: pass
 
-# 2. Database & Config Files
+# 2. Database Logic
 DB_FILE = "peters_garden_database.json"
-CONFIG_FILE = "peters_garden_config.json"
 
 def load_data():
     if os.path.exists(DB_FILE):
@@ -30,23 +29,13 @@ def load_data():
 def save_data(data):
     with open(DB_FILE, "w") as f: json.dump(data, f)
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f: return json.load(f)
-    return {"api_key": ""}
-
-def save_config(config):
-    with open(CONFIG_FILE, "w") as f: json.dump(config, f)
-
-# Initialize Session States
 if "garden" not in st.session_state: st.session_state.garden = load_data()
-if "config" not in st.session_state: st.session_state.config = load_config()
 if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 if "selected_plant" not in st.session_state: st.session_state.selected_plant = None
 
 st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
 
-# 3. HIGH CONTRAST STYLING (Pure White on Pure Black)
+# 3. STYLING
 st.markdown("""
     <style>
     .stApp { background-color: #000000 !important; }
@@ -60,7 +49,6 @@ st.markdown("""
     .header-label { font-weight: 900; color: #FFFFFF !important; font-size: 1.4rem; text-transform: uppercase; margin-bottom: 10px; display: block; }
     .loc-badge { font-size: 1.5rem !important; font-weight: bold; background-color: #1E3A8A; padding: 10px 20px; border-radius: 10px; border: 1px solid #3B82F6; display: inline-block; margin-bottom: 25px; }
     input { background-color: #222222 !important; color: white !important; }
-    button { color: #000000 !important; font-weight: bold !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -70,11 +58,6 @@ def get_any_image(plant):
     if 'history' in plant and len(plant['history']) > 0: return plant['history'][-1]['image']
     return None
 
-def get_sec(text, sec):
-    try: return text.split(f"[{sec}]")[1].split("[")[0].strip()
-    except: return "Information coming soon..."
-
-# 5. AI ENGINE
 def analyze_plant_gemini(image_pil, api_key):
     try:
         genai.configure(api_key=api_key.strip())
@@ -86,97 +69,75 @@ def analyze_plant_gemini(image_pil, api_key):
         return response.text
     except Exception as e: return f"ERROR: {str(e)}"
 
-# 6. SIDEBAR
+# 5. SIDEBAR (With Data Sync)
 with st.sidebar:
     st.header("🌿 Peter's Garden")
-    saved_key = st.session_state.config.get("api_key", "")
-    api_key = st.text_input("Gemini API Key", value=saved_key, type="password")
-    if api_key != saved_key:
-        st.session_state.config["api_key"] = api_key
-        save_config(st.session_state.config)
-        st.rerun()
-
+    api_key = st.text_input("Gemini API Key", type="password")
+    
     if st.button("⬅️ Back to Gallery"):
         st.session_state.view_mode = "gallery"
         st.rerun()
     
     st.divider()
+    st.subheader("💾 Sync & Backup")
+    # EXPORT: Download data to laptop/phone
+    json_data = json.dumps(st.session_state.garden)
+    st.download_button("📥 Save Backup to Device", json_data, file_name="peters_garden_backup.json")
+    
+    # IMPORT: Move data from laptop to phone
+    uploaded_backup = st.file_uploader("📤 Restore from Backup", type="json")
+    if uploaded_backup:
+        st.session_state.garden = json.load(uploaded_backup)
+        save_data(st.session_state.garden)
+        st.success("Garden Restored!")
+
+    st.divider()
     st.header("📸 Add a Plant")
-    uploaded_file = st.file_uploader("Upload photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
-    loc = st.text_input("Location (e.g. Lounge Area)")
-    if st.button("Identify & Add to Database"):
+    uploaded_file = st.file_uploader("Take Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
+    loc = st.text_input("Location")
+    if st.button("Identify & Save"):
         if uploaded_file and api_key:
             with st.spinner("AI analyzing..."):
                 image = Image.open(uploaded_file).convert('RGB')
                 raw_data = analyze_plant_gemini(image, api_key)
-                if "ERROR" in raw_data: st.error(raw_data)
-                else:
-                    buf = io.BytesIO()
-                    image.save(buf, format="JPEG")
-                    img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                    new_plant = {"id": str(datetime.now().timestamp()), "name": get_sec(raw_data, "NAME"), "location": loc, "image": img_b64, "data": raw_data}
-                    st.session_state.garden.append(new_plant)
-                    save_data(st.session_state.garden)
-                    st.success("Added!")
-                    st.rerun()
+                buf = io.BytesIO()
+                image.save(buf, format="JPEG")
+                img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+                new_plant = {"id": str(datetime.now().timestamp()), "name": raw_data.split("[NAME]")[1].split("[")[0].strip(), "location": loc, "image": img_b64, "data": raw_data}
+                st.session_state.garden.append(new_plant)
+                save_data(st.session_state.garden)
+                st.rerun()
 
-# 7. MAIN LOGIC
+# 6. GALLERY & DETAILS
 if st.session_state.view_mode == "gallery":
     st.title("My Garden")
-    search = st.text_input("🔍 Search garden (Type name or room)...")
-    
-    # Filter list
-    display_list = [p for p in st.session_state.garden if p.get('name') and (search.lower() in p['name'].lower() or search.lower() in p.get('location', '').lower())]
-    
-    if not display_list:
-        st.write("Your garden is empty. Add a plant using the sidebar!")
-    else:
-        cols = st.columns(3)
-        for i, plant in enumerate(reversed(display_list)):
-            with cols[i % 3]:
-                st.markdown('<div class="gallery-card">', unsafe_allow_html=True)
-                img_data = get_any_image(plant)
-                if img_data:
-                    st.image(base64.b64decode(img_data), use_container_width=True)
-                st.subheader(plant.get('name', 'Unknown'))
-                st.caption(f"📍 {plant.get('location', 'Unknown')}")
-                if st.button(f"View Details", key=f"view_{plant.get('id', i)}"):
-                    st.session_state.selected_plant = plant
-                    st.session_state.view_mode = "details"
-                    st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
+    search = st.text_input("🔍 Search garden...")
+    display_list = [p for p in st.session_state.garden if search.lower() in p.get('name','').lower()]
+    cols = st.columns(2 if st.sidebar.checkbox("Large View", False) else 3)
+    for i, plant in enumerate(reversed(display_list)):
+        with cols[i % len(cols)]:
+            st.markdown('<div class="gallery-card">', unsafe_allow_html=True)
+            img = get_any_image(plant)
+            if img: st.image(base64.b64decode(img), use_container_width=True)
+            st.subheader(plant.get('name', 'Unknown'))
+            if st.button("View Details", key=f"v_{i}"):
+                st.session_state.selected_plant = plant
+                st.session_state.view_mode = "details"
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 else:
-    # 8. DETAIL VIEW
-    plant = st.session_state.selected_plant
-    st.title(plant.get('name', 'Unknown'))
-    st.markdown(f'<div class="loc-badge">📍 {plant.get("location", "Unknown")}</div>', unsafe_allow_html=True)
-    
-    col_left, col_right = st.columns([1, 1.5])
-    with col_left:
-        img_data = get_any_image(plant)
-        if img_data:
-            st.image(base64.b64decode(img_data), use_container_width=True, caption="YOUR PLANT")
-        
-        st.divider()
-        st.header("🌟 IN ITS PRIME")
-        st.write(get_sec(plant.get('data', ''), 'PRIME'))
-        
-        # STABLE PRIME PHOTO BUTTON
-        search_url = f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote(plant.get('name', '') + ' plant mature prime')}"
-        st.link_button("🌐 VIEW PRIME PHOTOS ON WEB", search_url)
-        
-        st.divider()
-        if st.button("🗑️ Delete Plant"):
-            st.session_state.garden = [p for p in st.session_state.garden if p.get('id') != plant.get('id')]
-            save_data(st.session_state.garden)
-            st.session_state.view_mode = "gallery"
-            st.rerun()
-            
-    with col_right:
-        st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{get_sec(plant.get("data", ""), "FLOURISH")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{get_sec(plant.get("data", ""), "FORBIDDEN")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{get_sec(plant.get("data", ""), "PRUNE_FEED")}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="box box-glorious"><span class="header-label">✨ GLORIOUS TIPS</span>{get_sec(plant.get("data", ""), "GLORIOUS")}</div>', unsafe_allow_html=True)
-        
-        with st.expander("📍 VIEW PRUNING MAP"):
-            st.warning(get_sec(plant.get('data', ''), 'MAP'))
+    p = st.session_state.selected_plant
+    st.title(p['name'])
+    st.markdown(f'<div class="loc-badge">📍 {p.get("location", "Lounge")}</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns([1, 1.5])
+    with c1:
+        img = get_any_image(p)
+        if img: st.image(base64.b64decode(img), use_container_width=True)
+        search_url = f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote(p['name'] + ' plant mature')}"
+        st.link_button("🌐 VIEW PRIME PHOTOS", search_url)
+    with c2:
+        def gs(sec): return p['data'].split(f"[{sec}]")[1].split("[")[0].strip()
+        st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{gs("FLOURISH")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{gs("FORBIDDEN")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{gs("PRUNE_FEED")}</div>', unsafe_allow_html=True)
+        with st.expander("📍 VIEW PRUNING MAP"): st.warning(gs('MAP'))
