@@ -10,17 +10,17 @@ from supabase import create_client, Client
 # 1. PAGE SETUP
 st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
 
-# 2. LOAD SECRETS (From your Streamlit Vault)
+# 2. LOAD SECRETS
 try:
     SB_URL = st.secrets["SB_URL"].strip()
     SB_KEY = st.secrets["SB_KEY"].strip()
     GEMINI_KEY = st.secrets["GEMINI_KEY"].strip()
     supabase: Client = create_client(SB_URL, SB_KEY)
 except Exception as e:
-    st.error(f"Credentials Error: Please check Streamlit Secrets. {e}")
+    st.error(f"Credentials Error: {e}")
     st.stop()
 
-# 3. HIGH CONTRAST STYLING (Pure White on Pure Black)
+# 3. HIGH CONTRAST STYLING
 st.markdown("""
     <style>
     .stApp, [data-testid="stSidebar"], .stMarkdown { background-color: #000000 !important; }
@@ -32,12 +32,11 @@ st.markdown("""
     .box-forbidden { border-color: #EF4444; }
     .box-prune { border-color: #3B82F6; }
     .header-label { font-weight: 900; color: #FFFFFF !important; font-size: 1.3rem; text-transform: uppercase; margin-bottom: 10px; display: block; }
-    [data-testid="stSidebarCollapsedControl"] { background-color: #22C55E !important; }
     input { background-color: #222222 !important; color: white !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# 4. DATABASE & AI FUNCTIONS
+# 4. DATABASE & AI
 def fetch_garden():
     try:
         res = supabase.table("garden_table").select("*").order("created_at", ascending=False).execute()
@@ -50,14 +49,16 @@ def add_to_cloud(name, loc, img, data):
 def analyze_plant_gemini(image_pil, api_key):
     try:
         genai.configure(api_key=api_key)
-        # Use the specific model address to prevent 'NotFound' error
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
-        prompt = "Identify this plant and provide: [NAME], [FLOURISH], [FORBIDDEN], [MANAGE], [PRUNE_FEED], [GLORIOUS], [PRIME], and [MAP]."
-        response = model.generate_content([prompt, image_pil])
-        return response.text
+        # Try multiple model addresses to find the working one
+        for model_name in ['models/gemini-1.5-flash', 'gemini-1.5-flash']:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(["Identify this plant and provide care tips using these tags: [NAME], [FLOURISH], [FORBIDDEN], [PRUNE_FEED], [MAP].", image_pil])
+                return response.text
+            except: continue
+        return "ERROR: AI Brain not responding."
     except Exception as e: return f"ERROR: {str(e)}"
 
-# Robust section extractor for both tagged and untagged data
 def get_sec(text, sec):
     try:
         if f"[{sec}]" in text:
@@ -68,10 +69,13 @@ def get_sec(text, sec):
 # 5. NAVIGATION
 if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("🌿 Peter's Garden")
-    data = fetch_garden()
-    st.metric("Total Plants in Cloud", len(data))
+    
+    # Connection Meter
+    garden_data = fetch_garden()
+    st.metric("Total Plants in Cloud", len(garden_data))
     
     if st.button("🔄 REFRESH GALLERY"): st.rerun()
     if st.button("⬅️ BACK TO GALLERY"): 
@@ -79,8 +83,30 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
+    st.subheader("🚀 Migration Tool")
+    uploaded_json = st.file_uploader("Upload Desktop JSON", type="json")
+    if uploaded_json and st.button("Start Moving Plants"):
+        data_list = json.load(uploaded_json)
+        prog = st.progress(0)
+        for i, p in enumerate(data_list):
+            p_name = p.get('name', 'Plant').replace("**", "")
+            img = p.get('image') or (p['history'][-1].get('image') if 'history' in p else "")
+            # Shrink images for Cloud
+            if img:
+                try:
+                    decoded = base64.b64decode(img)
+                    temp_img = Image.open(io.BytesIO(decoded))
+                    buf = io.BytesIO()
+                    temp_img.save(buf, format="JPEG", quality=20)
+                    img = base64.b64encode(buf.getvalue()).decode('utf-8')
+                except: pass
+            add_to_cloud(p_name, p.get('location', 'Lounge'), img, p.get('data', ''))
+            prog.progress((i + 1) / len(data_list))
+        st.rerun()
+
+    st.divider()
     st.header("📸 Add Plant")
-    uploaded_file = st.file_uploader("Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
+    uploaded_file = st.file_uploader("Take Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
     loc_input = st.text_input("Location")
     if st.button("IDENTIFY & SAVE"):
         if uploaded_file:
@@ -94,11 +120,13 @@ with st.sidebar:
                 add_to_cloud(p_name, loc_input, img_b64, raw_ai)
                 st.rerun()
 
-# 6. MAIN DISPLAY
+# 6. DISPLAY
 if st.session_state.view_mode == "gallery":
     st.title("My Garden")
     search = st.text_input("🔍 Search garden...")
-    display_list = [p for p in data if search.lower() in p.get('name','').lower()]
+    display_list = [p for p in garden_data if search.lower() in p.get('name','').lower()]
+    
+    if not display_list: st.info("The gallery is empty. Check sidebar count.")
     
     cols = st.columns(2)
     for i, plant in enumerate(display_list):
@@ -120,7 +148,7 @@ else:
     c1, c2 = st.columns([1, 1.2])
     with c1:
         if p.get('image'): st.image(base64.b64decode(p['image']), use_container_width=True)
-        search_url = f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote(p['name'] + ' plant mature')}"
+        search_url = f"https://www.google.com/search?tbm=isch&q={urllib.parse.quote(str(p['name']) + ' plant mature')}"
         st.link_button("🌐 VIEW PRIME PHOTOS", search_url)
         if st.button("🗑️ DELETE"):
             supabase.table("garden_table").delete().eq("id", p['id']).execute()
@@ -128,15 +156,12 @@ else:
             st.rerun()
     with c2:
         d = p.get('data', '')
-        # Check if the data is formatted with tags
         flourish = get_sec(d, "FLOURISH")
         if flourish:
-            # Show standard boxes
             st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{flourish}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{get_sec(d, "FORBIDDEN")}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{get_sec(d, "PRUNE_FEED")}</div>', unsafe_allow_html=True)
-            with st.expander("📍 VIEW PRUNING MAP"): st.warning(get_sec(d, 'MAP'))
+            st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{get_sec(d, "FORBIDDEN") or "None"}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{get_sec(d, "PRUNE_FEED") or "None"}</div>', unsafe_allow_html=True)
+            with st.expander("📍 VIEW PRUNING MAP"): st.warning(get_sec(d, 'MAP') or "No specific map available.")
         else:
-            # This is a migrated plant with no tags
-            st.info("Migrated Information")
+            st.info("Plant Details")
             st.write(d)
