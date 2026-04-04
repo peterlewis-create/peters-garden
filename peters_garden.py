@@ -9,7 +9,6 @@ import urllib.parse
 from supabase import create_client, Client
 
 # --- PETER'S PERMANENT DATABASE DETAILS ---
-# These are now built-in so you don't have to paste them!
 SB_URL = "https://fgonjbqlwcbmamtpfykn.supabase.co"
 SB_KEY = "sb_publishable_uk0-o2scZSQNdTm_lgIrgw_xtg4uM6_Y9oY64"
 
@@ -24,7 +23,7 @@ st.markdown("""
     <style>
     .stApp, [data-testid="stSidebar"], .stMarkdown { background-color: #000000 !important; }
     p, li, h1, h2, h3, span, label, div, .stMarkdown { color: #FFFFFF !important; }
-    button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; border-radius: 8px !important; }
+    button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; border-radius: 8px !important; padding: 8px 15px !important; }
     .gallery-card { background-color: #000000; padding: 15px; border-radius: 15px; border: 2px solid #333333; text-align: center; margin-bottom: 30px; }
     .box { padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 4px solid; background-color: #000000; }
     .box-flourish { border-color: #22C55E; }
@@ -65,48 +64,63 @@ if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 
 with st.sidebar:
     st.title("🌿 Settings")
-    
-    # Peter's Gemini Key (Paste your long Google key here once)
     gemini_key = st.text_input("Paste Gemini API Key", type="password")
-    if gemini_key:
-        st.success("✅ AI Active")
+    if gemini_key: st.success("✅ AI Active")
 
     st.divider()
     if st.button("⬅️ BACK TO GALLERY"):
         st.session_state.view_mode = "gallery"
         st.rerun()
 
+    # --- RESTORED DATA SYNC TOOLS ---
+    st.divider()
+    st.subheader("💾 Cloud Sync & Tools")
+    
+    # IMPORT OLD DATA: This allows you to upload the file from your desktop
+    uploaded_old_data = st.file_uploader("📤 Upload Old Garden Data (.json)", type="json")
+    if uploaded_old_data:
+        old_plants = json.load(uploaded_old_data)
+        with st.spinner("Moving plants to Cloud..."):
+            for p in old_plants:
+                # Compatibility check for images
+                img = p.get('image') or (p['history'][-1]['image'] if 'history' in p else None)
+                add_to_cloud(p['name'], p.get('location', 'Lounge'), img, p.get('data', ''))
+            st.success("All plants moved to Cloud!")
+            st.rerun()
+
+    # EXPORT: Let's you save a hard copy of your cloud data
+    current_garden = fetch_garden()
+    json_dump = json.dumps(current_garden)
+    st.download_button("📥 Download Cloud Backup", json_dump, file_name="peters_garden_cloud_backup.json")
+
     st.divider()
     st.header("📸 Add Plant")
     uploaded_file = st.file_uploader("Take Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
-    loc_input = st.text_input("Location (e.g. Lounge)")
+    loc_input = st.text_input("Location")
     
     if st.button("IDENTIFY & SAVE"):
         if uploaded_file and gemini_key:
-            with st.spinner("Syncing to Cloud..."):
+            with st.spinner("Syncing..."):
                 image = Image.open(uploaded_file).convert('RGB')
                 raw_data = analyze_plant_gemini(image, gemini_key)
                 buf = io.BytesIO()
                 image.save(buf, format="JPEG", quality=50)
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                try:
-                    name = raw_data.split("[NAME]")[1].split("[")[0].strip()
-                except:
-                    name = "New Plant"
+                try: name = raw_data.split("[NAME]")[1].split("[")[0].strip()
+                except: name = "New Plant"
                 add_to_cloud(name, loc_input, img_b64, raw_data)
-                st.success("Added to Cloud!")
                 st.rerun()
 
 # 6. MAIN DISPLAY
 garden_data = fetch_garden()
 
 if st.session_state.view_mode == "gallery":
-    st.title("My Garden")
-    search = st.text_input("🔍 Search your garden...")
+    st.title("My Garden (Cloud)")
+    search = st.text_input("🔍 Search garden...")
     display_list = [p for p in garden_data if search.lower() in p['name'].lower()]
     
     if not display_list:
-        st.info("The garden is currently empty. Open the sidebar to add your first plant!")
+        st.info("Your cloud database is empty. Upload your old file from your Desktop using the sidebar to restore your data.")
     
     cols = st.columns(2)
     for i, plant in enumerate(reversed(display_list)):
@@ -133,7 +147,7 @@ else:
     with c2:
         def gs(sec): 
             try: return p['data'].split(f"[{sec}]")[1].split("[")[0].strip()
-            except: return "Pending..."
+            except: return "Data missing..."
         st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 TO FLOURISH</span>{gs("FLOURISH")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 FORBIDDEN</span>{gs("FORBIDDEN")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ PRUNE & FEED</span>{gs("PRUNE_FEED")}</div>', unsafe_allow_html=True)
