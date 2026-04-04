@@ -11,31 +11,31 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
 
-# 1. LOAD KEYS
+# 1. LOAD & CLEAN KEYS
 try:
+    # We strip spaces to ensure no hidden characters break the connection
     SB_URL = st.secrets["SB_URL"].strip()
     SB_KEY = st.secrets["SB_KEY"].strip()
     GEMINI_KEY = st.secrets["GEMINI_KEY"].strip()
     supabase: Client = create_client(SB_URL, SB_KEY)
 except Exception as e:
-    st.error(f"Credentials Error: {e}")
+    st.error(f"Credentials Error: {e}. Check Streamlit Secrets.")
     st.stop()
 
 # 2. STYLING
-st.markdown("<style>.stApp { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; } .gallery-card { background-color: #000000; padding: 15px; border: 1px solid #333333; text-align: center; margin-bottom: 30px; }</style>", unsafe_allow_html=True)
+st.markdown("<style>.stApp { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; } .gallery-card { background-color: #000000; padding: 15px; border: 2px solid #333333; text-align: center; margin-bottom: 30px; }</style>", unsafe_allow_html=True)
 
 # 3. DATABASE FUNCTIONS
 def fetch_garden():
     try:
         res = supabase.table("garden_table").select("*").order("created_at", ascending=False).execute()
         return res.data
-    except Exception as e:
-        return []
+    except: return []
 
 def add_to_cloud(name, loc, img, data):
+    # This is the actual push to Supabase
     try:
-        # We explicitly print the error if it fails
-        response = supabase.table("garden_table").insert({
+        supabase.table("garden_table").insert({
             "name": name, "location": loc, "image": img, "data": data
         }).execute()
         return True, "Success"
@@ -52,12 +52,19 @@ def analyze_plant_gemini(image_pil, api_key):
         return response.text
     except Exception as e: return f"ERROR: {str(e)}"
 
-# 5. APP LOGIC
+# 5. NAVIGATION
 if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 
 with st.sidebar:
     st.title("🌿 Peter's Garden")
-    st.success("☁️ Sync Active")
+    
+    # Connection Check
+    try:
+        supabase.table("garden_table").select("count", count="exact").execute()
+        st.success("✅ Cloud Connection: Active")
+    except:
+        st.error("❌ Cloud Connection: Invalid Key")
+
     if st.button("⬅️ BACK TO GALLERY"):
         st.session_state.view_mode = "gallery"
         st.rerun()
@@ -68,25 +75,16 @@ with st.sidebar:
     if uploaded_json:
         data = json.load(uploaded_json)
         if st.button("Start Moving Plants"):
-            st.write(f"Found {len(data)} plants. Starting...")
             prog = st.progress(0)
+            status_text = st.empty()
             for i, p in enumerate(data):
-                # Try to find image in old or new format
-                img = p.get('image')
-                if not img and 'history' in p and p['history']:
-                    img = p['history'][-1].get('image')
-                
-                name = p.get('name', 'Unknown')
-                success, error_msg = add_to_cloud(name, p.get('location', 'Lounge'), img, p.get('data', ''))
-                
-                if success:
-                    st.write(f"✅ Moved: {name}")
-                else:
-                    st.error(f"❌ Failed: {name}. Reason: {error_msg}")
-                
-                time.sleep(0.5) # Prevent overwhelming the database
+                img = p.get('image') or (p['history'][-1].get('image') if 'history' in p else None)
+                name = p.get('name', 'Plant')
+                status_text.text(f"Moving: {name}...")
+                success, err = add_to_cloud(name, p.get('location', 'Lounge'), img, p.get('data', ''))
+                if not success: st.error(f"Failed {name}: {err}")
                 prog.progress((i + 1) / len(data))
-            st.success("Migration attempt finished!")
+            st.success("Migration Complete!")
             st.rerun()
 
     st.divider()
@@ -101,8 +99,7 @@ with st.sidebar:
                 buf = io.BytesIO()
                 image.save(buf, format="JPEG", quality=40)
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                try: name = raw_data.split("[NAME]")[1].split("[")[0].strip()
-                except: name = "New Plant"
+                name = raw_data.split("[NAME]")[1].split("[")[0].strip() if "[NAME]" in raw_data else "New Plant"
                 add_to_cloud(name, loc_input, img_b64, raw_data)
                 st.rerun()
 
@@ -117,14 +114,15 @@ if st.session_state.view_mode == "gallery":
         with cols[i % 2]:
             st.markdown('<div class="gallery-card">', unsafe_allow_html=True)
             if plant['image']: st.image(base64.b64decode(plant['image']), use_container_width=True)
-            st.subheader(plant['name'])
-            st.caption(f"📍 {plant['location']}")
+            st.markdown(f"### {plant['name']}")
+            st.markdown(f"📍 {plant['location']}")
             if st.button("VIEW DETAILS", key=f"v_{plant['id']}"):
                 st.session_state.selected_plant = plant
                 st.session_state.view_mode = "details"
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 else:
+    # DETAIL VIEW
     p = st.session_state.selected_plant
     st.title(p['name'])
     st.markdown(f'<div style="background-color:#1E3A8A; padding:10px; border-radius:8px; display:inline-block;">📍 {p["location"]}</div>', unsafe_allow_html=True)
