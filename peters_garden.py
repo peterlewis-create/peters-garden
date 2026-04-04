@@ -2,7 +2,6 @@ import streamlit as st
 import google.generativeai as genai
 import base64
 import json
-import time
 from datetime import datetime
 from PIL import Image
 import io
@@ -18,25 +17,31 @@ try:
     GEMINI_KEY = st.secrets["GEMINI_KEY"].strip()
     supabase: Client = create_client(SB_URL, SB_KEY)
 except Exception as e:
-    st.error(f"Credentials Error: {e}. Check Streamlit Secrets.")
+    st.error(f"Setup Error: {e}")
     st.stop()
 
 # 2. STYLING
-st.markdown("<style>.stApp, [data-testid='stSidebar'] { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; border-radius: 8px !important; } .gallery-card { background-color: #111111; padding: 15px; border-radius: 15px; border: 2px solid #333333; text-align: center; margin-bottom: 30px; } .box { padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 4px solid; background-color: #000000; } .box-flourish { border-color: #22C55E; } .box-forbidden { border-color: #EF4444; } .box-prune { border-color: #3B82F6; } .header-label { font-weight: 900; font-size: 1.3rem; text-transform: uppercase; margin-bottom: 10px; display: block; } [data-testid='stSidebarCollapsedControl'] { background-color: #22C55E !important; } input { background-color: #222222 !important; color: white !important; }</style>", unsafe_allow_html=True)
+st.markdown("<style>.stApp { background-color: #000000 !important; } p, li, h1, h2, h3, span, label, div { color: #FFFFFF !important; } button { background-color: #111111 !important; color: #FFFFFF !important; border: 1px solid #FFFFFF !important; } .gallery-card { background-color: #111111; padding: 15px; border-radius: 15px; border: 1px solid #444; text-align: center; margin-bottom: 30px; } .box { padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 4px solid; background-color: #000000; } .box-flourish { border-color: #22C55E; } .box-forbidden { border-color: #EF4444; } .box-prune { border-color: #3B82F6; } .header-label { font-weight: 900; font-size: 1.3rem; text-transform: uppercase; margin-bottom: 10px; display: block; } input { background-color: #222222 !important; color: white !important; }</style>", unsafe_allow_html=True)
 
 # 3. DATABASE FUNCTIONS
-@st.cache_data(ttl=10) # Refresh every 10 seconds
 def fetch_garden():
     try:
-        res = supabase.table("garden_table").select("*").order("created_at", ascending=False).execute()
+        # Simplified fetch to ensure we get everything
+        res = supabase.table("garden_table").select("*").execute()
         return res.data
-    except: return []
+    except Exception as e:
+        return []
 
 def add_to_cloud(name, loc, img, data):
     try:
-        supabase.table("garden_table").insert({"name": name, "location": loc, "image": img, "data": data}).execute()
+        # Check if image is too large (Supabase limit is roughly 1MB per row for text)
+        supabase.table("garden_table").insert({
+            "name": name, "location": loc, "image": img, "data": data
+        }).execute()
         return True
-    except: return False
+    except Exception as e:
+        st.sidebar.error(f"Cloud Error: {e}")
+        return False
 
 # 4. AI ENGINE
 def analyze_plant_gemini(image_pil, api_key):
@@ -51,11 +56,15 @@ def analyze_plant_gemini(image_pil, api_key):
 # 5. NAVIGATION
 if "view_mode" not in st.session_state: st.session_state.view_mode = "gallery"
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("🌿 Peter's Garden")
     
+    # CLOUD COUNTER: This checks if the data exists
+    all_data = fetch_garden()
+    st.metric("Total Plants in Cloud", len(all_data))
+    
     if st.button("🔄 REFRESH GALLERY"):
-        st.cache_data.clear()
         st.rerun()
 
     if st.button("⬅️ BACK TO GALLERY"):
@@ -71,12 +80,10 @@ with st.sidebar:
             prog = st.progress(0)
             for i, p in enumerate(data):
                 img = p.get('image') or (p['history'][-1].get('image') if 'history' in p else None)
-                # Clean name of any markdown characters
-                name = p.get('name', 'Plant').replace("**", "").strip()
+                name = p.get('name', 'Plant').replace("**", "")
                 add_to_cloud(name, p.get('location', 'Lounge'), img, p.get('data', ''))
                 prog.progress((i + 1) / len(data))
-            st.success("Migration Complete!")
-            st.cache_data.clear()
+            st.success("Migration attempt finished! Refreshing...")
             st.rerun()
 
     st.divider()
@@ -89,30 +96,31 @@ with st.sidebar:
                 image = Image.open(uploaded_file).convert('RGB')
                 raw_data = analyze_plant_gemini(image, GEMINI_KEY)
                 buf = io.BytesIO()
-                image.save(buf, format="JPEG", quality=40)
+                image.save(buf, format="JPEG", quality=30) # High compression for stability
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
                 name = raw_data.split("[NAME]")[1].split("[")[0].strip().replace("**", "")
                 add_to_cloud(name, loc_input, img_b64, raw_data)
-                st.cache_data.clear()
                 st.rerun()
 
-# 6. DISPLAY GALLERY
-garden_data = fetch_garden()
+# --- MAIN DISPLAY ---
 if st.session_state.view_mode == "gallery":
     st.title("My Garden")
     search = st.text_input("🔍 Search garden...")
-    display_list = [p for p in garden_data if search.lower() in p['name'].lower()]
+    
+    # Simple list display
+    display_list = [p for p in all_data if search.lower() in p['name'].lower()]
     
     if not display_list:
-        st.info("The Cloud Gallery is currently empty. Add a plant or refresh.")
+        st.info("The Gallery is empty. (Cloud count: " + str(len(all_data)) + ")")
     
     cols = st.columns(2)
-    for i, plant in enumerate(display_list):
+    for i, plant in enumerate(reversed(display_list)):
         with cols[i % 2]:
             st.markdown('<div class="gallery-card">', unsafe_allow_html=True)
-            if plant['image']: st.image(base64.b64decode(plant['image']), use_container_width=True)
-            st.markdown(f"### {plant['name']}")
-            st.markdown(f"📍 {plant['location']}")
+            if plant.get('image'): 
+                st.image(base64.b64decode(plant['image']), use_container_width=True)
+            st.subheader(plant.get('name', 'Plant'))
+            st.markdown(f"📍 {plant.get('location', 'Lounge')}")
             if st.button("VIEW DETAILS", key=f"v_{plant['id']}"):
                 st.session_state.selected_plant = plant
                 st.session_state.view_mode = "details"
@@ -130,7 +138,6 @@ else:
         st.link_button("🌐 VIEW PRIME PHOTOS", search_url)
         if st.button("🗑️ DELETE"):
             supabase.table("garden_table").delete().eq("id", p['id']).execute()
-            st.cache_data.clear()
             st.session_state.view_mode = "gallery"
             st.rerun()
     with c2:
