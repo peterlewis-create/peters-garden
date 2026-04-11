@@ -1,69 +1,72 @@
 import streamlit as st
 import google.generativeai as genai
 import base64
-import json
+from datetime import datetime
 from PIL import Image
 import io
 from supabase import create_client, Client
 
-# 1. PAGE SETUP
-st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
+# 1. PAGE SETUP & FLOWER ICON
+st.set_page_config(
+    page_title="Peter's Garden", 
+    layout="wide", 
+    page_icon="🌸"
+)
 
-# 2. CLOUD CONNECTION
+# This block forces the iPhone/iPad to use a Flower icon when saved to the Home Screen
+st.markdown("""
+    <head>
+        <link rel="apple-touch-icon" href="https://img.icons8.com/color/512/lotus.png">
+    </head>
+    """, unsafe_allow_html=True)
+
+# 2. CLOUD CONNECTION (The Master Sync)
 try:
     URL = st.secrets["SB_URL"].strip()
     KEY = st.secrets["SB_KEY"].strip()
     G_KEY = st.secrets["GEMINI_KEY"].strip()
     supabase: Client = create_client(URL, KEY)
 except Exception as e:
-    st.error("Setup incomplete. Check Streamlit Secrets.")
+    st.error("Cloud Connection Error. Please verify Streamlit Secrets.")
     st.stop()
 
-# 3. SOPHISTICATED GARDEN STYLING (Slate, Sage & Soft White)
+# 3. SOPHISTICATED GARDEN STYLING (Mirror Mode)
 st.markdown("""
     <style>
-    /* 1. Global Background - Deep Slate Navy */
+    /* Global Background - Deep Slate Navy */
     .stApp, [data-testid="stSidebar"], [data-testid="stHeader"] {
         background-color: #0F172A !important;
     }
 
-    /* 2. Global Text - Soft Off-White */
+    /* Global Text - Soft Off-White */
     h1, h2, h3, p, li, span, label, div, .stMarkdown {
         color: #F1F5F9 !important;
-        font-family: 'Inter', sans-serif;
+        font-family: 'Inter', 'Helvetica', sans-serif;
     }
 
-    /* 3. Sidebar - Slightly Lighter Slate */
+    /* Sidebar - Slate */
     [data-testid="stSidebar"] {
         background-color: #1E293B !important;
         border-right: 2px solid #334155;
     }
 
-    /* 4. Input Fields - Explicit Colors to prevent "Ghosting" */
+    /* Input Fields - High Visibility */
     input, textarea {
         background-color: #0F172A !important;
         color: #FFFFFF !important;
         border: 2px solid #475569 !important;
     }
 
-    /* 5. File Uploader - Sage Green Border */
-    [data-testid="stFileUploadDropzone"] {
-        background-color: #1E293B !important;
-        border: 2px dashed #22C55E !important;
-        color: #F1F5F9 !important;
-    }
-
-    /* 6. Buttons - Sage Green with Dark Text */
+    /* Buttons - Sage Green with Dark Text */
     button, [data-testid="stBaseButton-secondary"] {
         background-color: #22C55E !important;
         color: #0F172A !important;
         border: none !important;
         font-weight: 700 !important;
-        padding: 10px 20px !important;
-        border-radius: 8px !important;
+        border-radius: 10px !important;
     }
 
-    /* 7. Gallery Cards - Clean Slate */
+    /* Gallery Cards */
     .gallery-card {
         background-color: #1E293B !important;
         padding: 15px;
@@ -71,21 +74,25 @@ st.markdown("""
         border: 1px solid #334155;
         text-align: center;
         margin-bottom: 25px;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
     }
 
-    /* 8. Dashboard Boxes - Professional Colored Fills */
+    /* Dashboard Boxes - White Text on Dark Backs with Colored Borders */
     .box {
         padding: 20px;
         border-radius: 12px;
         margin-bottom: 20px;
+        background-color: #0F172A !important;
         color: #FFFFFF !important;
         border-left: 10px solid !important;
+        border-top: 1px solid #334155;
+        border-right: 1px solid #334155;
+        border-bottom: 1px solid #334155;
     }
-    .box-flourish { background-color: #064E3B; border-color: #22C55E !important; } /* Deep Green */
-    .box-forbidden { background-color: #450A0A; border-color: #EF4444 !important; } /* Deep Red */
-    .box-prune { background-color: #1E3A8A; border-color: #3B82F6 !important; }     /* Deep Blue */
-    .box-glorious { background-color: #422006; border-color: #F59E0B !important; }  /* Deep Gold */
+    .box-flourish { border-left-color: #22C55E !important; }
+    .box-forbidden { border-left-color: #EF4444 !important; }
+    .box-prune { border-left-color: #3B82F6 !important; }
+    .box-glorious { border-left-color: #F59E0B !important; }
     
     .header-label {
         font-weight: 800 !important;
@@ -94,14 +101,14 @@ st.markdown("""
         text-transform: uppercase;
         letter-spacing: 1px;
         display: block;
-        margin-bottom: 5px;
+        margin-bottom: 8px;
     }
 
     /* Fix for Expander */
     details {
         background-color: #1E293B !important;
         border: 1px solid #334155 !important;
-        border-radius: 8px;
+        border-radius: 10px;
         padding: 10px;
     }
     summary { font-weight: bold; color: #22C55E !important; }
@@ -113,19 +120,21 @@ def get_sec(text, sec):
     try:
         parts = text.split(f"[{sec}]")
         return parts[1].split("[")[0].strip() if len(parts) > 1 else "..."
-    except: return "Error."
+    except: return "Section not found."
 
 # 5. SIDEBAR
 with st.sidebar:
     st.markdown("### 🌿 Peter's Garden")
-    if st.button("🔄 REFRESH SYSTEM"): st.rerun()
+    if st.button("🔄 FORCE REFRESH ALL DEVICES"):
+        st.cache_data.clear()
+        st.rerun()
     
     st.divider()
-    st.markdown("#### 📸 New Entry")
+    st.markdown("#### 📸 Add New Entry")
     pic = st.file_uploader("Capture Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
     loc_in = st.text_input("Assign Room")
     
-    if st.button("SAVE TO CLOUD") and pic:
+    if st.button("SAVE & SYNC TO CLOUD") and pic:
         with st.spinner("AI analyzing..."):
             genai.configure(api_key=G_KEY)
             model = genai.GenerativeModel('gemini-1.5-flash')
@@ -134,26 +143,38 @@ with st.sidebar:
             response = model.generate_content([prompt, img_obj])
             ai_text = response.text
             
+            # Image Compression for Cloud Performance
             buf = io.BytesIO()
             img_obj.save(buf, format="JPEG", quality=40)
             img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
             
             p_name = get_sec(ai_text, "NAME")
             supabase.table("garden_table").insert({
-                "name": p_name, "location": loc_in, "image": img_b64, "data": ai_text
+                "name": p_name, 
+                "location": loc_in, 
+                "image": img_b64, 
+                "data": ai_text,
+                "created_at": datetime.now().isoformat()
             }).execute()
-            st.success(f"Saved!")
+            st.success(f"Successfully synced {p_name}!")
             st.rerun()
 
-# 6. MAIN DISPLAY
-res = supabase.table("garden_table").select("*").execute()
+# 6. MAIN GALLERY (Deduplicated Master View)
+# We fetch fresh data from the cloud to ensure all devices mirror each other
+res = supabase.table("garden_table").select("*").order("created_at", desc=True).execute()
 garden_data = res.data
 
 if st.session_state.get('view_mode') != 'details':
-    st.markdown("## My Garden Collection")
-    cols = st.columns(2)
-    for i, plant in enumerate(reversed(garden_data)):
-        with cols[i % 2]:
+    st.markdown("## My Garden Mirror")
+    search = st.text_input("🔍 Search garden (Type name or room)...")
+    
+    # Grid Logic: 2 columns for mobile, 4 for laptop
+    cols = st.columns(2 if st.sidebar.checkbox("Mobile Grid", True) else 4)
+    
+    filtered_data = [p for p in garden_data if search.lower() in p['name'].lower() or search.lower() in p['location'].lower()]
+    
+    for i, plant in enumerate(filtered_data):
+        with cols[i % len(cols)]:
             st.markdown('<div class="gallery-card">', unsafe_allow_html=True)
             if plant['image']: 
                 st.image(base64.b64decode(plant['image']), use_container_width=True)
@@ -165,14 +186,14 @@ if st.session_state.get('view_mode') != 'details':
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 else:
-    # 7. DETAIL VIEW
+    # 7. DETAIL VIEW (The High-Contrast Mirror)
     p = st.session_state.selected_plant
     if st.button("⬅️ RETURN TO GALLERY"):
         st.session_state.view_mode = 'gallery'
         st.rerun()
         
     st.markdown(f"# {p['name']}")
-    col_l, col_r = st.columns([1, 1]) # Balanced for iPad
+    col_l, col_r = st.columns([1, 1])
     
     with col_l:
         st.image(base64.b64decode(p['image']), use_container_width=True)
@@ -182,7 +203,7 @@ else:
         st.write(get_sec(p['data'], 'PRIME'))
 
     with col_r:
-        # THE BOXES (Color Filled with White Text)
+        # THE BOXES (Color Bordered with pure white text on slate background)
         st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 To Flourish</span>{get_sec(p["data"], "FLOURISH")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 Forbidden</span>{get_sec(p["data"], "FORBIDDEN")}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ Prune & Feed</span>{get_sec(p["data"], "PRUNE_FEED")}</div>', unsafe_allow_html=True)
@@ -192,7 +213,7 @@ else:
             st.write(get_sec(p['data'], 'MAP'))
     
     st.divider()
-    if st.button("🗑️ REMOVE PLANT"):
+    if st.button("🗑️ REMOVE PLANT FROM ALL DEVICES"):
         supabase.table("garden_table").delete().eq("id", p['id']).execute()
         st.session_state.view_mode = 'gallery'
         st.rerun()
