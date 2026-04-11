@@ -9,7 +9,7 @@ from supabase import create_client, Client
 # 1. PAGE SETUP
 st.set_page_config(page_title="Peter's Garden", layout="wide", page_icon="🌿")
 
-# 2. CLOUD CONNECTION (Secrets)
+# 2. CLOUD CONNECTION
 try:
     URL = st.secrets["SB_URL"].strip()
     KEY = st.secrets["SB_KEY"].strip()
@@ -19,42 +19,58 @@ except Exception as e:
     st.error("Setup incomplete. Check Streamlit Secrets.")
     st.stop()
 
-# 3. ABSOLUTE HIGH-CONTRAST STYLING (Forced for Mobile)
+# 3. NUCLEAR CONTRAST STYLING (Forced for iPad/iPhone)
 st.markdown("""
     <style>
-    /* 1. Global Background - Forced Pure Black */
-    .stApp, [data-testid="stSidebar"], [data-testid="stHeader"], .main {
+    /* Force Background to Pure Black */
+    .stApp, [data-testid="stSidebar"], [data-testid="stHeader"] {
         background-color: #000000 !important;
     }
 
-    /* 2. Global Text - Forced Pure White */
-    p, li, h1, h2, h3, span, label, div, .stMarkdown, .stCaption {
+    /* Force ALL text to White by default */
+    h1, h2, h3, p, li, span, label, div {
         color: #FFFFFF !important;
-        font-weight: 500 !important;
     }
 
-    /* 3. Sidebar Specific - Kill the Gray */
-    section[data-testid="stSidebar"] {
+    /* Target the Sidebar specifically to kill Gray */
+    [data-testid="stSidebar"] section {
         background-color: #000000 !important;
-        border-right: 1px solid #333333;
     }
 
-    /* 4. Gallery Cards - Black with White Border */
-    .gallery-card {
+    /* INPUT FIELDS (The "Which Room?" boxes) */
+    input, textarea {
         background-color: #111111 !important;
-        padding: 15px;
-        border-radius: 15px;
-        border: 2px solid #FFFFFF !important; /* White border for high contrast */
-        text-align: center;
-        margin-bottom: 25px;
+        color: #FFFFFF !important;
+        border: 2px solid #FFFFFF !important;
+        border-radius: 5px !important;
     }
 
-    /* 5. Dashboard Boxes - Solid Black Backgrounds */
+    /* FILE UPLOADER (The "White Box" fix) */
+    /* We make it dark gray so the white text "Drag and Drop" is visible */
+    [data-testid="stFileUploadDropzone"] {
+        background-color: #222222 !important;
+        border: 2px dashed #FFFFFF !important;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stFileUploadDropzone"] div, [data-testid="stFileUploadDropzone"] small {
+        color: #FFFFFF !important;
+    }
+
+    /* BUTTONS - Black text on White background for extreme visibility */
+    button, [data-testid="stBaseButton-secondary"] {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        border: 2px solid #FFFFFF !important;
+        font-weight: 900 !important;
+        text-transform: uppercase !important;
+    }
+
+    /* DASHBOARD BOXES */
     .box {
         padding: 20px;
         border-radius: 12px;
         margin-bottom: 20px;
-        border: 4px solid !important;
+        border: 5px solid !important;
         background-color: #000000 !important;
     }
     .box-flourish { border-color: #22C55E !important; }
@@ -65,33 +81,27 @@ st.markdown("""
     .header-label {
         font-weight: 900 !important;
         color: #FFFFFF !important;
-        font-size: 1.3rem !important;
+        font-size: 1.4rem !important;
         text-transform: uppercase;
         display: block;
         margin-bottom: 8px;
     }
 
-    /* 6. Buttons - Forced High Contrast */
-    button {
-        background-color: #FFFFFF !important;
-        color: #000000 !important;
-        font-weight: bold !important;
-        border-radius: 8px !important;
-        border: none !important;
-    }
-
-    /* 7. Input Fields - Dark with White Text */
-    input, textarea, [data-testid="stFileUploadDropzone"] {
-        background-color: #222222 !important;
-        color: #FFFFFF !important;
-        border: 1px solid #FFFFFF !important;
+    /* GALLERY CARDS */
+    .gallery-card {
+        background-color: #111111 !important;
+        padding: 15px;
+        border-radius: 15px;
+        border: 2px solid #FFFFFF !important;
+        text-align: center;
+        margin-bottom: 25px;
     }
     
-    /* 8. Fix for Expander (Pruning Map) */
+    /* Fix for Expander/Pruning Map */
     details {
+        border: 2px solid #FFFFFF !important;
         background-color: #111111 !important;
-        border: 1px solid #FFFFFF !important;
-        border-radius: 8px;
+        color: #FFFFFF !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -100,21 +110,21 @@ st.markdown("""
 def get_sec(text, sec):
     try:
         parts = text.split(f"[{sec}]")
-        return parts[1].split("[")[0].strip() if len(parts) > 1 else "Processing..."
-    except: return "Section error."
+        return parts[1].split("[")[0].strip() if len(parts) > 1 else "..."
+    except: return "Error."
 
 # 5. SIDEBAR
 with st.sidebar:
-    st.title("🌿 Peter's Garden")
-    if st.button("🔄 REFRESH"): st.rerun()
+    st.markdown("### 🌿 Peter's Garden")
+    if st.button("🔄 REFRESH GALLERY"): st.rerun()
     
     st.divider()
-    st.header("📸 New Plant")
+    st.markdown("### 📸 New Plant")
     pic = st.file_uploader("Upload/Take Photo", type=['jpg', 'jpeg', 'png', 'HEIC', 'heic'])
     loc_in = st.text_input("Which Room?")
     
     if st.button("SAVE TO CLOUD") and pic:
-        with st.spinner("AI analyzing..."):
+        with st.spinner("Analyzing..."):
             genai.configure(api_key=G_KEY)
             model = genai.GenerativeModel('gemini-1.5-flash')
             img_obj = Image.open(pic).convert('RGB')
@@ -130,40 +140,39 @@ with st.sidebar:
             supabase.table("garden_table").insert({
                 "name": p_name, "location": loc_in, "image": img_b64, "data": ai_text
             }).execute()
-            st.success(f"Saved {p_name}!")
+            st.success(f"Saved!")
             st.rerun()
 
 # 6. MAIN DISPLAY
-garden_data = supabase.table("garden_table").select("*").execute().data
+res = supabase.table("garden_table").select("*").execute()
+garden_data = res.data
 
 if st.session_state.get('view_mode') != 'details':
-    st.title("My Gallery")
-    # Force 2 columns on iPad/iPhone for big, readable photos
+    st.markdown("## My Gallery")
     cols = st.columns(2)
     for i, plant in enumerate(reversed(garden_data)):
         with cols[i % 2]:
             st.markdown('<div class="gallery-card">', unsafe_allow_html=True)
             if plant['image']: 
                 st.image(base64.b64decode(plant['image']), use_container_width=True)
-            st.subheader(plant['name'])
-            st.write(f"📍 {plant['location']}")
-            if st.button("VIEW DETAILS", key=f"v_{plant['id']}"):
+            st.markdown(f"### {plant['name']}")
+            st.markdown(f"📍 {plant['location']}")
+            if st.button("DETAILS", key=f"v_{plant['id']}"):
                 st.session_state.selected_plant = plant
                 st.session_state.view_mode = 'details'
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 else:
-    # 7. DETAIL VIEW (The High-Contrast Dashboard)
+    # 7. DETAIL VIEW
     p = st.session_state.selected_plant
-    if st.button("⬅️ BACK TO GALLERY"):
+    if st.button("⬅️ BACK"):
         st.session_state.view_mode = 'gallery'
         st.rerun()
         
-    st.header(p['name'])
+    st.markdown(f"# {p['name']}")
     st.image(base64.b64decode(p['image']), use_container_width=True)
-    st.markdown(f'<div class="box" style="border-color:#1E3A8A;"><span class="header-label">📍 LOCATION</span>{p["location"]}</div>', unsafe_allow_html=True)
+    st.markdown(f"📍 **LOCATION:** {p['location']}")
 
-    # Dashboard Boxes
     st.markdown(f'<div class="box box-flourish"><span class="header-label">🌿 To Flourish</span>{get_sec(p["data"], "FLOURISH")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="box box-forbidden"><span class="header-label">🚫 Forbidden</span>{get_sec(p["data"], "FORBIDDEN")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="box box-prune"><span class="header-label">✂️ Prune & Feed</span>{get_sec(p["data"], "PRUNE_FEED")}</div>', unsafe_allow_html=True)
@@ -172,7 +181,7 @@ else:
     with st.expander("📍 VIEW PRUNING MAP"):
         st.write(get_sec(p['data'], 'MAP'))
     
-    if st.button("🗑️ DELETE FROM DATABASE"):
+    if st.button("🗑️ DELETE"):
         supabase.table("garden_table").delete().eq("id", p['id']).execute()
         st.session_state.view_mode = 'gallery'
         st.rerun()
